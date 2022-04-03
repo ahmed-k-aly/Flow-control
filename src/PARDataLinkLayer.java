@@ -301,7 +301,7 @@ public class PARDataLinkLayer extends DataLinkLayer {
 		LOGGER.entering(PARDataLinkLayer.class.getName(), new Throwable().getStackTrace()[0].getMethodName());
 
 		if (receiver.correctFrameReceived){
-			LOGGER.fine("Checking acknowledgement for received frame.");
+			LOGGER.info("Checking acknowledgement for received frame.");
 			// True if we just received a frame in processFrame().
 
 			receiver.correctFrameReceived = false; // we have not received the NEXT frame yet.
@@ -313,7 +313,7 @@ public class PARDataLinkLayer extends DataLinkLayer {
 				sendAcknowledgment();
 			} else {
 				// if frameNumbers mismatch, assume it is a duplicate
-				LOGGER.warning("RECEIVER: FRAME NUMBER MISMATCH. " + "Sent Frame Number: " 
+				LOGGER.fine("RECEIVER: FRAME NUMBER MISMATCH. " + "Sent Frame Number: " 
 				+  frameNumber + " Receiver Frame number: " + receiver.getFrameNumber() + "\n");
 				// return ack and wait for the next frame.
 				sendAcknowledgment();
@@ -324,8 +324,6 @@ public class PARDataLinkLayer extends DataLinkLayer {
 
 				return;
 			}
-			// handle acknowledgment
-			// handle client
 		} else{
 			return;
 		}
@@ -431,6 +429,10 @@ public class PARDataLinkLayer extends DataLinkLayer {
 	} // cleanBufferUpTo ()
 		// =========================================================================
 
+	
+	// =========================================================================
+	// LOCAL CLASSES	
+
 	class Sender {
 		// stores current frame number to send using createFrame.
 		private int currFrameNumber = 0;
@@ -466,7 +468,7 @@ public class PARDataLinkLayer extends DataLinkLayer {
 		/**
 		 * @brief increments the current frame number to be sent using createFrame.
 		 */
-		private void incrementFrameNumber() {
+		public void incrementFrameNumber() {
 			currFrameNumber++;
 			currFrameNumber = currFrameNumber % 2; // prevent overflow.
 		}
@@ -475,7 +477,7 @@ public class PARDataLinkLayer extends DataLinkLayer {
 		/**
 		 * @brief starts a timer for this instance once called.
 		 */
-		private void startNewTimer() {
+		public void startNewTimer() {
 			timerStart = System.currentTimeMillis();
 		}
 
@@ -484,7 +486,7 @@ public class PARDataLinkLayer extends DataLinkLayer {
 		 * @return a long denoting how many milliseconds have passed since the timer was
 		 *         started.
 		 */
-		private long timerDuration() {
+		public long timerDuration() {
 			if (timerStart == 0) {
 				// ensure that the timer has started before
 				throw new IllegalStateException("Timer has not been started yet.");
@@ -495,15 +497,14 @@ public class PARDataLinkLayer extends DataLinkLayer {
 		/**
 		 * @brief resets the timer to its initial state of zero.
 		 */
-		private void endTimer() {
+		public void endTimer() {
 			timerStart = 0;
 		}
 
 	}
-
 	class Receiver {
 		// stores current frame number to send using createFrame.
-		public int currFrameNumber = 0;
+		private int currFrameNumber = 0;
 		// boolean signaling that we received the correct frame.
 		public boolean correctFrameReceived = false;
 
