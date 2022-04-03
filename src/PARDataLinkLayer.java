@@ -8,6 +8,7 @@ import java.util.Queue;
 // =============================================================================
 import java.util.Timer;
 import java.util.logging.Logger;
+import java.util.logging.Level;
 
 // =============================================================================
 /**
@@ -46,9 +47,10 @@ public class PARDataLinkLayer extends DataLinkLayer {
 	/** signals if we created the receiver class yet or not. */
 	private Receiver receiver = new Receiver();
 
-	/** creates a logger instance */
-	private final Logger LOGGER = Logger.getLogger(PARDataLinkLayer.class.getName());
+	/** creates a volatile logger instance to be accessed by both threads. */
+	private static volatile Logger LOGGER = Logger.getLogger(PARDataLinkLayer.class.getName());
 
+	private static final boolean logging = false;
 	// =========================================================================
 
 	// =========================================================================
@@ -227,6 +229,9 @@ public class PARDataLinkLayer extends DataLinkLayer {
 	 */
 	@Override
 	protected Queue<Byte> sendNextFrame() {
+		if (!logging){
+			LOGGER.setLevel(Level.OFF);
+		}
 		// Log information on the current method call.
 		LOGGER.entering(PARDataLinkLayer.class.getName(), new Throwable().getStackTrace()[0].getMethodName());
 		
@@ -351,7 +356,7 @@ public class PARDataLinkLayer extends DataLinkLayer {
 		}
 		long timeDuration = sender.timerDuration();
 		if (timeDuration > TIMEOUT_INTERVAL_MS) {
-			LOGGER.warning("TIMEOUT OCCURED: " + timeDuration +"\n");
+			LOGGER.fine("TIMEOUT OCCURED: " + timeDuration +"\n");
 			// signal that a timeout has occurred if 100 milliseconds have passed since we
 			// sent out message.
 			//  resend the message.
