@@ -39,6 +39,8 @@ public class PARDataLinkLayer extends DataLinkLayer {
 	/** The Acknowledgment tag */
 	private final byte acknowledgmentTag = (byte) 6;
 
+	private final int TIMEOUT_INTERVAL_MS = 100;
+
 	/** signals if we created the sender class yet or not. */
 	private Sender sender = new Sender();
 	/** signals if we created the receiver class yet or not. */
@@ -59,14 +61,16 @@ public class PARDataLinkLayer extends DataLinkLayer {
 	protected Queue<Byte> createFrame(Queue<Byte> data) {
 
 		// Calculate the parity.
+		
+		// add the frame number as either zero or one to the data to 
+		// be calculated in the parity.
+		data.add((byte) (sender.currFrameNumber));
 		byte parity = calculateParity(data);
 
 		// Begin with the start tag.
 		Queue<Byte> framingData = new LinkedList<Byte>();
 		framingData.add(startTag);
 
-		// add the frame number as either zero or one
-		framingData.add((byte) (sender.currFrameNumber));
 		// Add each byte of original data.
 		for (byte currentByte : data) {
 
@@ -173,32 +177,39 @@ public class PARDataLinkLayer extends DataLinkLayer {
 		if (debug) {
 			System.out.println("ParityDataLinkLayer.processFrame(): Got whole frame!");
 		}
-		//LOGGER.info("Whole Frame Processed.");
+		LOGGER.fine("Whole Frame Processed.");
 
 		// Sender POV if ack received.
-		if (extractedBytes.size() == 1) { // True if the only byte sent is an acknowledgment.
+			if (extractedBytes.size() == 1) { // True if the only byte sent is an acknowledgment.
 			// This is because we have at least one parity byte + data for normal frames.
 			Byte ackByte = extractedBytes.remove();
 			if (ackByte != acknowledgmentTag) { // This should always be true
-				LOGGER.warning("Acknowledgement Tag Dropped");
+				LOGGER.warning("SENDER: Acknowledgement Tag bits flipped\n");
 			}
 			// * This assumes that if we get one byte only, then it is acknowledgment since we are not doing NACKs here 
 			// signal that we received an acknowledgement
 			sender.acknowledgmentReceived();
-			LOGGER.info("Sender received acknowledgement");
+			LOGGER.fine("SENDER: Sender received acknowledgement");
 			// do nothing.
 			return null;
-		}
-
-		byte frameNumber = extractedBytes.remove();
+			}
+		
 		// The final byte inside the frame is the parity. Compare it to a
 		// recalculation.
 		byte receivedParity = extractedBytes.remove(extractedBytes.size() - 1);
 		byte calculatedParity = calculateParity(extractedBytes);
 		if (receivedParity != calculatedParity) {
-			System.out.printf("ParityDataLinkLayer.processFrame():\tDamaged frame\n");
+			// FIXME:
+			//! A BUG HAPPENS LEADING TO AN ENTIRE FRAME BEING DROPPED AND NOT RESENT 
+			
+			//System.out.printf("ParityDataLinkLayer.processFrame():\tDamaged frame\n");
+			LOGGER.warning("RECEIVER: Damaged frame: " + extractedBytes);
+			receiver.corruptedFrameReceived();
 			return null;
 		}
+
+		// * puts the frame number as the first byte in the extracted bytes.
+		byte frameNumber = extractedBytes.removeLast();
 		extractedBytes.addFirst(frameNumber);
 		// we received a non-damaged frame.
 		receiver.frameReceived();
@@ -218,19 +229,22 @@ public class PARDataLinkLayer extends DataLinkLayer {
 	protected Queue<Byte> sendNextFrame() {
 		// Log information on the current method call.
 		LOGGER.entering(PARDataLinkLayer.class.getName(), new Throwable().getStackTrace()[0].getMethodName());
-		if (sendBuffer.isEmpty() && !sender.resend) {
-			// if there is nothing to send, just return null.
-			return null;
-		}
 		/** FIXME:
 		 * !THIS METHOD WON'T BE CALLED IF THERE IS 
 		 * !NO MORE DATA IN THE SEND BUFFER. THIS WILL
 		 * !LEAD TO A BUG IF THE LAST FRAME SENT NEEDS A RESEND
 		 * * SOLUTION IS TO DO RESEND IN checkTimeout().
-		*/
+		 */
 		if (sender.resend) { // True if we are resending a message.
 			// if this is a resend,
+			if (sender.lastFrame == null) {
+				LOGGER.severe("SENDER: Resending null frame");
+				throw new IllegalStateException();
+			}
+			
 			// resend the lost frame.
+			LOGGER.warning("SENDER: Resending Frame: " + sender.lastFrame);
+			
 			transmit(sender.lastFrame);
 			// we are not resending anymore.
 			sender.resend = false;
@@ -255,7 +269,6 @@ public class PARDataLinkLayer extends DataLinkLayer {
 
 		// Create a frame from the data and transmit it.
 		Queue<Byte> framedData = createFrame(data);
-		sender.endTimer();
 		transmit(framedData);
 
 		return framedData;
@@ -305,27 +318,37 @@ public class PARDataLinkLayer extends DataLinkLayer {
 	protected void finishFrameReceive (Queue<Byte> frame) {
 		LOGGER.entering(PARDataLinkLayer.class.getName(), new Throwable().getStackTrace()[0].getMethodName());
 
-		if (receiver.frameReceived){
-			LOGGER.info("Checking acknowledgement for received frame");
+		if (receiver.correctFrameReceived){
+			LOGGER.fine("Checking acknowledgement for received frame.");
 			// True if we just received a frame in processFrame().
-			
-			receiver.frameReceived = false; // we have not received the NEXT frame yet.
+
+			receiver.correctFrameReceived = false; // we have not received the NEXT frame yet.
 			// Retrieves the frame number from the queue's top.
 			byte frameNumber = frame.remove();
 			// check if the frame numbers match
 			if (frameNumber == receiver.getFrameNumber()){
-				receiver.sendAcknowledgment = true; // we should send ack.
 				// send ack.
 				sendAcknowledgment();
-			} else{
-				// if frameNumbers mismatch, return and wait for a timeout.
+			} else {
+				// if frameNumbers mismatch, assume it is a duplicate
+				LOGGER.warning("RECEIVER: FRAME NUMBER MISMATCH. " + "Sent Frame Number: " 
+				+  frameNumber + " Receiver Frame number: " + receiver.getFrameNumber() + "\n");
+				// return ack and wait for the next frame.
+				sendAcknowledgment();
+
+				// two frame number increments equal no change. 
+				// see sendAcknowledgment().
+				receiver.incrementFrameNumber();
+
 				return;
 			}
 			// handle acknowledgment
 			// handle client
+		} else{
+			return;
 		}
-		// if no frame is received, this is unreachable since
-		// processFrame() would return null and not enter this method.
+		// * if no frame is received, this is unreachable since
+		// * processFrame() would return null and not enter this method.
 
 		// Deliver frame to the client.
 		byte[] deliverable = new byte[frame.size()];
@@ -350,7 +373,8 @@ public class PARDataLinkLayer extends DataLinkLayer {
 			return;
 		}
 		long timeDuration = sender.timerDuration();
-		if (timeDuration > 100) {
+		if (timeDuration > TIMEOUT_INTERVAL_MS) {
+			LOGGER.warning("TIMEOUT OCCURED: " + timeDuration +"\n");
 			// signal that a timeout has occurred if 100 milliseconds have passed since we
 			// sent out message.
 
@@ -405,7 +429,7 @@ public class PARDataLinkLayer extends DataLinkLayer {
 
 	class Sender {
 		// stores current frame number to send using createFrame.
-		public int currFrameNumber = 0;
+		private int currFrameNumber = 0;
 		// boolean that flags that we got confirmation on the last sent frame.
 		public boolean confirmationReceived = true;
 		// boolean that flags if we have to resend the previous frame.
@@ -421,7 +445,9 @@ public class PARDataLinkLayer extends DataLinkLayer {
 			// we can not send the next frame yet.
 			// updates the current last frame.
 			lastFrame = frame;
+			
 			// starts a new timer
+			endTimer();
 			startNewTimer();
 		}
 
@@ -429,10 +455,8 @@ public class PARDataLinkLayer extends DataLinkLayer {
 			// update that we should send the next frame.
 			// no need to keep track of the old frame.
 			lastFrame = null;
-			
 			confirmationReceived = true;
 			incrementFrameNumber();
-
 			// no resend needed.
 			resend = false;
 			// reset the timer to zero.
@@ -444,8 +468,9 @@ public class PARDataLinkLayer extends DataLinkLayer {
 		 */
 		private void incrementFrameNumber() {
 			currFrameNumber++;
-			currFrameNumber = currFrameNumber % 2;
+			currFrameNumber = currFrameNumber % 2; // prevent overflow.
 		}
+
 
 		/**
 		 * @brief starts a timer for this instance once called.
@@ -479,14 +504,29 @@ public class PARDataLinkLayer extends DataLinkLayer {
 	class Receiver {
 		// stores current frame number to send using createFrame.
 		public int currFrameNumber = 0;
-		// boolean that flags that we got confirmation on the last sent frame.
-		public boolean confirmationSent = false;
-		// boolean that flags if we should send acknowledgment or not
-		public boolean sendAcknowledgment = false;
-		// boolean that flags if we can send the next frame or not.
-		public boolean waitForNextFrame = true;
-		// boolean signaling that we received a frame.
-		public boolean frameReceived = false;
+		// boolean signaling that we received the correct frame.
+		public boolean correctFrameReceived = false;
+
+		// stores the last frame that arrived.
+		private Queue<Byte> lastFrameReceived = null;
+
+
+		public void storeLastFrame(Queue<Byte> frame){
+			lastFrameReceived = frame;
+		}
+
+		public Queue<Byte> getLastFrameReceived(){
+			return lastFrameReceived;
+		}
+
+		/** 
+		 * @brief Evaluates whether the passed in frame is identical to the
+		 * 		  last frame received.
+		 * @param frameToCompare The frame to compare with the last frame received.
+		 * */ 
+		public boolean isDuplicateFrame(Queue<Byte> frameToCompare){
+			return frameToCompare!= null && lastFrameReceived!=null && lastFrameReceived.containsAll(frameToCompare);
+		}
 
 		/**
 		 * @brief increments the current frame number to be sent using createFrame.
@@ -500,14 +540,8 @@ public class PARDataLinkLayer extends DataLinkLayer {
 		 * @brief increments the current frame number to be sent using createFrame.
 		 */
 		public void acknowledgmentSent() {
-			// we sent the confirmation message
-			confirmationSent = true;
-			// we are waiting for the next frame
-			waitForNextFrame = true;
-			// no frame received
-			frameReceived = false;
-			// update that the acknowledgment has been sent.
-			sendAcknowledgment = false;
+			// waiting on next frame.
+			correctFrameReceived = false;
 			// next frame
 			incrementFrameNumber();
 		}
@@ -522,11 +556,11 @@ public class PARDataLinkLayer extends DataLinkLayer {
 		}
 
 		public void frameReceived() {
-			confirmationSent = false;
-			waitForNextFrame = false;
-			sendAcknowledgment = true;
-			frameReceived = true;
+			correctFrameReceived = true;
+		}
 
+		public void corruptedFrameReceived() {
+			correctFrameReceived = false;
 		}
 	}
 
