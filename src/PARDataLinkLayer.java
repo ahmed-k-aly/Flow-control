@@ -229,30 +229,7 @@ public class PARDataLinkLayer extends DataLinkLayer {
 	protected Queue<Byte> sendNextFrame() {
 		// Log information on the current method call.
 		LOGGER.entering(PARDataLinkLayer.class.getName(), new Throwable().getStackTrace()[0].getMethodName());
-		/** FIXME:
-		 * !THIS METHOD WON'T BE CALLED IF THERE IS 
-		 * !NO MORE DATA IN THE SEND BUFFER. THIS WILL
-		 * !LEAD TO A BUG IF THE LAST FRAME SENT NEEDS A RESEND
-		 * * SOLUTION IS TO DO RESEND IN checkTimeout().
-		 */
-		if (sender.resend) { // True if we are resending a message.
-			// if this is a resend,
-			if (sender.lastFrame == null) {
-				LOGGER.severe("SENDER: Resending null frame");
-				throw new IllegalStateException();
-			}
-			
-			// resend the lost frame.
-			LOGGER.warning("SENDER: Resending Frame: " + sender.lastFrame);
-			
-			transmit(sender.lastFrame);
-			// we are not resending anymore.
-			sender.resend = false;
-			// reset the timer to zero.
-			sender.endTimer();
-			// return the sent frame.
-			return sender.lastFrame;
-		}
+		
 		if (!sender.confirmationReceived){
 			// if we didn't receive a confirmation on the last frame
 			// don't do anything.
@@ -377,15 +354,37 @@ public class PARDataLinkLayer extends DataLinkLayer {
 			LOGGER.warning("TIMEOUT OCCURED: " + timeDuration +"\n");
 			// signal that a timeout has occurred if 100 milliseconds have passed since we
 			// sent out message.
-
-			// confirmation message not received
-			sender.confirmationReceived = false;
-			// signal we are resending the message
-			sender.resend = true;
+			//  resend the message.
+			resendMessage();
 			// message should be resent in sendNextFrame()
 		}
 	} // checkTimeout ()
 		// =========================================================================
+
+
+	/** 
+	 * @brief Method that resends the last sent message.
+	 * @throws IllegalStateException if the last sent frame is null
+	 * 								 This happens when we are sending frame #0.
+	*/
+	private void resendMessage() {
+		if (sender.lastFrame == null) {
+			LOGGER.severe("SENDER: Resending null frame");
+			throw new IllegalStateException();
+		}
+		
+		// resend the lost frame.
+		LOGGER.warning("SENDER: Resending Frame: " + sender.lastFrame);
+		
+		transmit(sender.lastFrame);
+		// reset the timer to zero.
+		sender.endTimer();
+		// return the sent frame.
+		finishFrameSend(sender.lastFrame);
+	}
+	
+
+
 
 	// =========================================================================
 	/**
@@ -432,8 +431,6 @@ public class PARDataLinkLayer extends DataLinkLayer {
 		private int currFrameNumber = 0;
 		// boolean that flags that we got confirmation on the last sent frame.
 		public boolean confirmationReceived = true;
-		// boolean that flags if we have to resend the previous frame.
-		public boolean resend = false;
 		// queue that holds the last sent frame
 		public Queue<Byte> lastFrame = null;
 		// a long that holds the time unit where we started a timer
@@ -457,8 +454,6 @@ public class PARDataLinkLayer extends DataLinkLayer {
 			lastFrame = null;
 			confirmationReceived = true;
 			incrementFrameNumber();
-			// no resend needed.
-			resend = false;
 			// reset the timer to zero.
 			endTimer();
 		}
