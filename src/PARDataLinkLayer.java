@@ -12,15 +12,14 @@ import java.util.logging.Level;
 
 // =============================================================================
 /**
- * @file ParityDataLinkLayer.java
- * @author Scott F. Kaplan (sfkaplan@cs.amherst.edu)
- * @date February 2020
+ * @file PARDataLinkLayer.java
+ * @author Ahmed Aly
+ * @date April 2022
  *
  *       A data link layer that uses start/stop tags and byte packing to frame
  *       the
  *       data, and that performs error management with a parity bit. It employs
- *       no
- *       flow control; damaged frames are dropped.
+ *       an acknowlegment only protocol for flow control; damaged frames are resent.
  */
 public class PARDataLinkLayer extends DataLinkLayer {
 	// =============================================================================
